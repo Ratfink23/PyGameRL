@@ -13,6 +13,7 @@ CELL_HEIGHT = 32
 MAP_WIDTH = 40
 MAP_HEIGHT = 40
 MAP_MAX_ROOMS = 10
+MAP_MAX_DEPTH = 2
 
 ROOM_MAX_HEIGHT = 7
 ROOM_MAX_WIDTH = 5
@@ -39,6 +40,7 @@ COLOR_YELLOW = (255,255,0)
 # FONT
 FONT_DEBUG = pygame.font.Font("data/JOYSTIX.TTF", 16)
 FONT_MESSAGE = pygame.font.Font("data/JOYSTIX.TTF", 12)
+FONT_TITLE = pygame.font.Font("data/JOYSTIX.TTF", 26)
 FONT_CURSOR_TEXT = pygame.font.Font("data/JOYSTIX.TTF", CELL_HEIGHT)
 
 # Game colors

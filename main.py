@@ -8,6 +8,9 @@ import random
 import math
 import pickle
 import gzip
+import datetime
+import os
+
 from typing import Tuple, Type, Any
 # Libraries
 import tcod as libtcod
@@ -29,8 +32,23 @@ class str_Tile:
         self.seen = False
 
 
-class str_Assets:
+class str_Preferences:
+    def __init__(self):
+        self.vol_sound = .5
+        self.vol_music = .5
+
+
+#
+# OBJECTS
+#
+
+class obj_Assets:
     def __init__(self) -> None:
+        self.load_sprites()
+        self.load_audio()
+        self.sound_adjust()
+
+    def load_sprites(self):
         # Sprites
         self.reptiles = obj_Spritesheet('data/reptiles.png')
         self.aquatic = obj_Spritesheet('data/aquatic_creatures.png')
@@ -42,6 +60,8 @@ class str_Assets:
         self.flesh = obj_Spritesheet('data/Flesh.png')
         self.tile = obj_Spritesheet('data/Tile.png')
         self.rodents = obj_Spritesheet('data/Rodents.png')
+        self.light = obj_Spritesheet('data/Light.png')
+        self.doors = obj_Spritesheet('data/Door0.png')
 
         self.A_PLAYER = self.reptiles.get_Animation(2, 'm', 5, 16, 16, (32, 32))
         self.A_SNAKE_01 = self.reptiles.get_Animation(2, 'e', 5, 16, 16, (32, 32))
@@ -57,6 +77,7 @@ class str_Assets:
         self.S_SCROLL_01 = self.scroll.get_Sprite(0, 0, 16, 16, (32, 32))
         self.S_SCROLL_02 = self.scroll.get_Sprite(0, 1, 16, 16, (32, 32))
         self.S_SCROLL_03 = self.scroll.get_Sprite(1, 4, 16, 16, (32, 32))
+        self.S_LAMP = self.light.get_Sprite(4, 0, 16, 16, (32, 32))
 
         self.S_WALL = self.wall.get_Sprite(3, 3, 16, 16, (32, 32))[0]
         self.S_WALL_UNSEEN = self.wall.get_Sprite(3, 12, 16, 16, (32, 32))[0]
@@ -65,6 +86,10 @@ class str_Assets:
         self.S_FLOOR_UNSEEN = self.floor.get_Sprite(1, 10, 16, 16, (32, 32))[0]
         self.S_STAIRS_DOWN = self.tile.get_Sprite(5, 1, 16, 16, (32, 32))
         self.S_STAIRS_UP = self.tile.get_Sprite(4, 1, 16, 16, (32, 32))
+        self.S_PORTAL_CLOSED = self.doors.get_Sprite(2, 5, 16, 16, (32, 32))
+        self.S_PORTAL_OPEN = self.doors.get_Sprite(3, 5, 16, 16, (32, 32))
+        self.MAIN_MENU_BG = pygame.transform.scale(pygame.image.load('data/main_menu_image.jpg'),
+                                                   (constants.CAMERA_WIDTH, constants.CAMERA_HEIGHT))
 
         self.animation_dict = {
             "A_PLAYER": self.A_PLAYER,
@@ -81,24 +106,36 @@ class str_Assets:
             "S_SCROLL_02": self.S_SCROLL_02,
             "S_SCROLL_03": self.S_SCROLL_03,
             "S_STAIRS_DOWN": self.S_STAIRS_DOWN,
-            "S_STAIRS_UP": self.S_STAIRS_UP
+            "S_STAIRS_UP": self.S_STAIRS_UP,
+            "S_LAMP": self.S_LAMP,
+            "S_PORTAL_CLOSED": self.S_PORTAL_CLOSED,
+            "S_PORTAL_OPEN": self.S_PORTAL_OPEN
         }
 
-        ## AUDIO
-        self.background_music = "data/IntroMusic.wav"
-        self.snd_hit1 = pygame.mixer.Sound("data/Hit_Hurt3.wav")
-        self.snd_hit2 = pygame.mixer.Sound("data/Hit_Hurt4.wav")
-        self.snd_hard1 = pygame.mixer.Sound("data/Hit_Hard1.wav")
-        self.snd_hard2 = pygame.mixer.Sound("data/Hit_Hard2.wav")
+    def load_audio(self):
+        self.snd_master_list = []
 
+        self.background_music = "data/IntroMusic.wav"
+        self.snd_hit1 = self.add_sound("data/Hit_Hurt3.wav")
+        self.snd_hit2 = self.add_sound("data/Hit_Hurt4.wav")
+        self.snd_hard1 = self.add_sound("data/Hit_Hard1.wav")
+        self.snd_hard2 = self.add_sound("data/Hit_Hard2.wav")
         self.snd_list_hit = [self.snd_hit1, self.snd_hit2, self.snd_hard1, self.snd_hard2]
 
-#
-# OBJECTS
-#
+    def add_sound(self, file):
+        new_sound = pygame.mixer.Sound(file)
+        self.snd_master_list.append(new_sound)
+
+        return new_sound
+
+    def sound_adjust(self):
+        for sound in self.snd_master_list:
+            sound.set_volume(PREF.vol_sound)
+
+        pygame.mixer.music.set_volume(PREF.vol_music)
+
 
 class obj_Game:
-
     def __init__(self) -> None:
         self.current_obj = []
         self.message_log = []
@@ -138,9 +175,9 @@ class obj_Game:
 
 class obj_Actor:
 
-    def __init__(self, x: int, y: int, name_object: str, animation_key: str, depth = 0,
+    def __init__(self, x: int, y: int, name_object: str, animation_key: str, depth=0,
                  creature: object = None, ai: object = None, container: object = None, item: object = None,
-                 equipment: object = None, stairs: object = None) -> None:
+                 equipment: object = None, stairs: object = None, portal: object = None) -> None:
         self.x = x
         self.y = y
         self.name_object = name_object
@@ -148,6 +185,7 @@ class obj_Actor:
         self.depth = depth
         self.animation_speed = 0.5  # TODO change to variable in seconds
         self.animation_cell = 0
+        self.state = None
 
         # animation ticker
         self.flicker = (self.animation_speed / len(ASSETS.animation_dict[self.animation_key]))
@@ -180,6 +218,10 @@ class obj_Actor:
         self.stairs = stairs
         if stairs:
             self.stairs.owner = self
+
+        self.portal = portal
+        if portal:
+            self.portal.owner = self
 
     @property
     def display_name(self) -> str:
@@ -468,9 +510,7 @@ class com_Item:
         if self.use_function:
             result = self.use_function(self.container.owner, self.value)
 
-        if result is not None:
-            print('Use Function Failed')
-        else:
+        if result is None:
             self.remove()
 
     def remove(self) -> None:
@@ -540,6 +580,30 @@ class com_Stairs:
             GAME.transition_previous()
 
 
+class com_Portal:
+    def __init__(self, key: str):
+        self.portalclosed = "S_PORTAL_CLOSED"
+        self.portalopen = "S_PORTAL_OPEN"
+        self.key = key
+        self.open = False
+        self.found_key = False
+
+    def update(self):
+        for item in PLAYER.container.inventory:
+            if self.key == item.item.value:
+                self.found_key = True
+                break
+            else:
+                self.found_key = False
+
+        if self.found_key and not self.open:
+            self.owner.animation_key = self.portalopen
+            self.open = True
+        elif not self.found_key and self.open:
+            self.open = False
+            self.owner.animation_key = self.portalclosed
+
+
 #
 # AI
 #
@@ -596,6 +660,43 @@ def death_mouse(mouse: Type[obj_Actor]) -> None:
     mouse.creature = None
     mouse.ai = None
 
+
+def death_player(player: Type[obj_Actor]) -> None:
+    player.state = "STATUS_DEAD"
+    SURFACE_MAIN.fill(constants.COLOR_BLACK)
+    draw_text(SURFACE_MAIN, "You're Dead", constants.FONT_TITLE,
+              (constants.CAMERA_WIDTH / 2, constants.CAMERA_HEIGHT / 2),
+              constants.COLOR_RED, center=True)
+
+    filename = ("data\legacy_" + player.name_object + "." + datetime.date.today().strftime("%Y%B%d"))
+    legacy_file = open(filename, 'a+')
+    for message, color in GAME.message_log:
+        legacy_file.write(message + "\n")
+
+    files_delete('data\savegame')
+
+    pygame.display.update()
+    pygame.time.wait(2000)
+
+
+def win_player(player: Type[obj_Actor]) -> None:
+    player.state = "STATUS_WIN"
+    SURFACE_MAIN.fill(constants.COLOR_BLACK)
+    game_message('{0} has escaped the Snake Pit'.format(player.name_object), constants.COLOR_WHITE)
+    draw_text(SURFACE_MAIN, "You're Escaped!", constants.FONT_TITLE,
+          (constants.CAMERA_WIDTH / 2, constants.CAMERA_HEIGHT / 2),
+          constants.COLOR_WHITE, center=True)
+
+    filename = ("data\win_" + player.name_object + "." + datetime.date.today().strftime("%Y%B%d"))
+    legacy_file = open(filename, 'a+')
+    for message, color in GAME.message_log:
+        legacy_file.write(message + "\n")
+
+    files_delete('data\savegame')
+
+    pygame.display.update()
+    pygame.time.wait(2000)
+
 #
 # MAPPING
 #
@@ -633,20 +734,24 @@ def map_create():
 
 
 def map_place_objects(room_list: list) -> None:
-
     top_level = (len(GAME.maps_previous) == 0)
 
     for room in room_list:
         first_room = (room == room_list[0])
         last_room = (room == room_list[-1])
 
-        if first_room: PLAYER.x, PLAYER.y = room.center
-
-        if first_room and not top_level:
-            gen_Stairs(room.center, downwards=False)
+        if first_room:
+            PLAYER.x, PLAYER.y = room.center
+            if not top_level:
+                gen_Stairs(room.center, downwards=False)
+            else:
+                gen_Portal(room.center, key='Magic Lamp')
 
         if last_room:
-            gen_Stairs(room.center, downwards=True)
+            if len(GAME.maps_previous) == constants.MAP_MAX_DEPTH-1:
+                gen_magic_lamp(room.center, "Magic Lamp")
+            else:
+                gen_Stairs(room.center, downwards=True)
 
         item_x = random.randint(room.x1, room.x2)
         item_y = random.randint(room.y1, room.y2)
@@ -901,19 +1006,29 @@ def screen_mid_offset(width, height):
 # MAGIC
 #
 
-def cast_heal(target, val):
-    if target.creature.hp == target.creature.max_hp:
-        game_message('{0} already at full health'.format(target.name_object), constants.COLOR_WHITE)
+def cast_heal(caster, val):
+    if caster.creature.hp == caster.creature.max_hp:
+        game_message('{0} already at full health'.format(caster.name_object), constants.COLOR_WHITE)
         return 'cancelled'
     else:
-        game_message('{0} healed for {1}'.format(target.name_object, val), constants.COLOR_LIME)
-        target.creature.heal_self(val)
+        game_message('{0} healed for {1}'.format(caster.name_object, val), constants.COLOR_LIME)
+        caster.creature.heal_self(val)
 
     return None
 
 
-def cast_lightning(caster, T_damage_range=(5, 5)):
-    cast_damage, cast_range = T_damage_range
+def cast_key(caster, key):
+    for obj in map_obj_at_loc(caster.x, caster.y):
+        if obj.portal and obj.portal.key == key:
+            win_player(caster)
+            return 'cancelled'
+
+    game_message('This is a key to a portal. Stand on the portal and try again', constants.COLOR_WHITE)
+    return 'cancelled'
+
+
+def cast_lightning(caster, damage_range=(5, 5)):
+    cast_damage, cast_range = damage_range
     caster_pos = (caster.x, caster.y)
     end_point = menu_tile_select(caster_pos, cast_range)
     if end_point:
@@ -932,8 +1047,8 @@ def cast_lightning(caster, T_damage_range=(5, 5)):
     return
 
 
-def cast_fireball(caster, T_damage_range_radius=(5, 5, 1)):
-    cast_damage, cast_range, cast_radius = T_damage_range_radius
+def cast_fireball(caster, damage_range_radius=(5, 5, 1)):
+    cast_damage, cast_range, cast_radius = damage_range_radius
     caster_pos = (caster.x, caster.y)
     target_select = menu_tile_select(caster_pos, cast_range, wall_blocking=False, enemy_blocking=True,
                                      radius=cast_radius)
@@ -953,8 +1068,8 @@ def cast_fireball(caster, T_damage_range_radius=(5, 5, 1)):
     return
 
 
-def cast_confusion(caster, T_turns_range=(3, 5)):
-    cast_turns, cast_range = T_turns_range
+def cast_confusion(caster, turns_range=(3, 5)):
+    cast_turns, cast_range = turns_range
     caster_pos = (caster.x, caster.y)
     end_point = menu_tile_select(caster_pos, cast_range, enemy_blocking=False, wall_blocking=True)
     if end_point:
@@ -977,10 +1092,10 @@ def cast_confusion(caster, T_turns_range=(3, 5)):
 
 class ui_button:
     def __init__(self, surface, button_text, size, center_coords,
-                 color_box_mouseover = constants.COLOR_RED,
-                 color_box_default = constants.COLOR_GREEN,
-                 color_text_mouseover = constants.COLOR_GREY,
-                 color_text_default = constants.COLOR_GREY):
+                 color_box_mouseover=constants.COLOR_RED,
+                 color_box_default=constants.COLOR_GREEN,
+                 color_text_mouseover=constants.COLOR_GREY,
+                 color_text_default=constants.COLOR_GREY):
 
         self.surface = surface
         self.button_text = button_text
@@ -1020,11 +1135,46 @@ class ui_button:
             self.current_c_box = self.c_box_default
             self.current_c_text = self.c_text_default
 
-
     def draw(self):
         pygame.draw.rect(self.surface, self.current_c_box, self.rect)
         draw_text(self.surface, self.button_text, constants.FONT_DEBUG, self.center_coords,
                   self.current_c_text, self.current_c_box, center=True)
+
+
+class ui_slider:
+    def __init__(self, surface, size, center_coords, bg_color, fg_color, value):
+        self.surface = surface
+        self.size = size
+        self.center_coords = center_coords
+
+        self.rect = pygame.Rect((0, 0), size)
+        self.rect.center = center_coords
+
+        self.bg_color = bg_color
+        self.fg_color = fg_color
+        self.value = value
+
+        self.slider_rect = pygame.Rect((0, 0), size)
+        self.slider_rect.width = self.rect.width * self.value
+        self.slider_rect.topleft = self.rect.topleft
+
+    def update(self, player_input):
+        mouse_down = pygame.mouse.get_pressed()[0]
+
+        local_events, local_mousexy = player_input
+        mouse_x, mouse_y = local_mousexy
+
+        mouse_over = (self.rect.left <= mouse_x <= self.rect.right
+                      and self.rect.bottom >= mouse_y >= self.rect.top)
+
+        if mouse_down and mouse_over:
+            self.value = (mouse_x - self.rect.left) / self.rect.width
+            self.slider_rect.width = self.rect.width * self.value
+
+    def draw(self):
+        pygame.draw.rect(self.surface, self.bg_color, self.rect)
+        pygame.draw.rect(self.surface, self.fg_color, self.slider_rect)
+
 
 #
 # MENU
@@ -1034,17 +1184,20 @@ def menu_main():
     game_init()
     menu_running = True
 
-    title_y = constants.CAMERA_HEIGHT/2 - 40
-    title_x = constants.CAMERA_WIDTH/2
+    title_y = constants.CAMERA_HEIGHT / 2 - 40
+    title_x = constants.CAMERA_WIDTH / 2
     title_text = "Python RL"
 
+    # Button Alignment
+    button_offset = 40
+
     # draw menu
-    SURFACE_MAIN.fill(constants.COLOR_BLACK)
+    menu_build = True
 
-    draw_text(SURFACE_MAIN, title_text, constants.FONT_DEBUG, (title_x, title_y),
-              constants.COLOR_WHITE, center=True)
-
-    start_button = ui_button(SURFACE_MAIN, 'Start Game', (150, 30), (constants.CAMERA_WIDTH/2, constants.CAMERA_HEIGHT/2))
+    start_button = ui_button(SURFACE_MAIN, 'New Game', (160, 30), (title_x, title_y + button_offset))
+    continue_button = ui_button(SURFACE_MAIN, 'Continue Game', (160, 30), (title_x, title_y + (button_offset * 2)))
+    options_button = ui_button(SURFACE_MAIN, 'Options', (160, 30), (title_x, title_y + (button_offset * 3)))
+    quit_button = ui_button(SURFACE_MAIN, 'Quit Game', (160, 30), (title_x, title_y + (button_offset * 4)))
 
     # music
     pygame.mixer.music.load(ASSETS.background_music)
@@ -1056,21 +1209,120 @@ def menu_main():
 
         game_input = (list_events, mouse_pos)
 
+        if menu_build:
+            SURFACE_MAIN.blit(ASSETS.MAIN_MENU_BG, (0, 0))
+            draw_text(SURFACE_MAIN, title_text, constants.FONT_TITLE, (title_x, title_y),
+                      constants.COLOR_BLACK, back_color=constants.COLOR_WHITE, center=True)
+            menu_build = False
+
         for event in list_events:
             if event.type == pygame.QUIT:
                 pygame.quit()
                 exit()
 
-        #button updates
+        # button updates
+        if continue_button.update(game_input):
+            pygame.mixer.music.stop()
+            try:
+                game_load()
+            except:
+                game_new()
+
+            game_main_loop()
+            menu_build = True
+
         if start_button.update(game_input):
             pygame.mixer.music.stop()
-            game_start()
+            game_new()
+            game_main_loop()
+            menu_build = True
 
+        if options_button.update(game_input):
+            menu_options()
+            menu_build = True
+
+        if quit_button.update(game_input):
+            pygame.mixer.music.stop()
+            game_exit()
+
+        continue_button.draw()
         start_button.draw()
+        options_button.draw()
+        quit_button.draw()
 
         # update surface
         pygame.display.update()
 
+
+def menu_options():
+    option_menu_width = 200
+    option_menu_height = 200
+
+    option_menu_center = (constants.CAMERA_WIDTH / 2, constants.CAMERA_HEIGHT / 2)
+
+    option_menu_surface = pygame.Surface((option_menu_width, option_menu_height))
+    option_menu_rect = pygame.Rect(0, 0, option_menu_width, option_menu_height)
+    option_menu_rect.center = option_menu_center
+
+    # sliders
+    slider_x = constants.CAMERA_WIDTH / 2
+    slider_y = constants.CAMERA_HEIGHT / 2 - 50
+
+    menu_close = False
+    option_menu_surface.fill(constants.COLOR_GREY)
+    SURFACE_MAIN.blit(option_menu_surface, option_menu_rect.topleft)
+
+    # Menu Header
+    draw_text(SURFACE_MAIN, "OPTIONS", constants.FONT_DEBUG, (slider_x, slider_y - 30),
+              constants.COLOR_WHITE, center=True)
+
+    sound_effect_slider = ui_slider(SURFACE_MAIN, (175, 10), (slider_x, slider_y + 20),
+                                    constants.COLOR_BLACK, constants.COLOR_WHITE, PREF.vol_sound)
+
+    music_effect_slider = ui_slider(SURFACE_MAIN, (175, 10), (slider_x, slider_y + 70),
+                                    constants.COLOR_BLACK, constants.COLOR_WHITE, PREF.vol_music)
+
+    # Slider Text
+    draw_text(SURFACE_MAIN, "Sounds Volume", constants.FONT_MESSAGE, (slider_x, slider_y),
+              constants.COLOR_WHITE, center=True)
+    draw_text(SURFACE_MAIN, "Music Volume", constants.FONT_MESSAGE, (slider_x, slider_y + 50),
+              constants.COLOR_WHITE, center=True)
+
+    # Save Button
+    save_button = ui_button(SURFACE_MAIN, 'Save', (160, 30), (slider_x, slider_y + 120))
+
+    while not menu_close:
+        mouse_pos = pygame.mouse.get_pos()
+        list_events = pygame.event.get()
+        game_input = (list_events, mouse_pos)
+
+        for event in list_events:
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                menu_close = True
+
+        if PREF.vol_sound is not sound_effect_slider.value:
+            PREF.vol_sound = sound_effect_slider.value
+            ASSETS.sound_adjust()
+
+        if PREF.vol_music is not music_effect_slider.value:
+            PREF.vol_music = music_effect_slider.value
+            ASSETS.sound_adjust()
+
+        sound_effect_slider.update(game_input)
+        music_effect_slider.update(game_input)
+
+        if save_button.update(game_input):
+            pref_save()
+            menu_close = True
+
+        sound_effect_slider.draw()
+        music_effect_slider.draw()
+        save_button.draw()
+        pygame.display.update()
 
 
 def menu_pause():
@@ -1283,7 +1535,8 @@ def gen_scroll_confusion(coords: PosXY):
     item_use_range = random.randint(5, 7)
     item_use_turns = random.randint(3, 5)
     scroll_item = com_Item(use_function=cast_confusion, value=(item_use_turns, item_use_range))
-    scroll = obj_Actor(x, y, "Confusion Scroll", animation_key="S_SCROLL_03", depth=constants.DEPTH_ITEM, item=scroll_item)
+    scroll = obj_Actor(x, y, "Confusion Scroll", animation_key="S_SCROLL_03", depth=constants.DEPTH_ITEM,
+                       item=scroll_item)
 
     return scroll
 
@@ -1314,7 +1567,6 @@ def gen_snake_anaconda(coords: PosXY):
     ai_com = ai_Chase()
     snake = obj_Actor(x, y, "Snake", "A_SNAKE_01", depth=constants.DEPTH_CREATURE, creature=creature_com, ai=ai_com)
 
-
     return snake
 
 
@@ -1324,7 +1576,7 @@ def gen_snake_cobra(coords: PosXY):
     max_attack = random.randint(3, 6)
     creature_com = com_Creature("Cobra", death_function=death_snake, max_hp=max_health, base_atk=max_attack)
     ai_com = ai_Chase()
-    snake = obj_Actor(x, y, "Snake", "A_SNAKE_03", depth=constants.DEPTH_CREATURE,  creature=creature_com, ai=ai_com)
+    snake = obj_Actor(x, y, "Snake", "A_SNAKE_03", depth=constants.DEPTH_CREATURE, creature=creature_com, ai=ai_com)
 
     return snake
 
@@ -1359,8 +1611,9 @@ def gen_player(coords: PosXY):
     global PLAYER
     x, y = coords
     container_com = com_Container()
-    creature_com = com_Creature("Player")
-    PLAYER = obj_Actor(x, y, "Python", animation_key="A_PLAYER", depth=constants.DEPTH_PLAYER, creature=creature_com, container=container_com)
+    creature_com = com_Creature("Player", base_atk=4, max_hp=20, death_function=death_player)
+    PLAYER = obj_Actor(x, y, "Python", animation_key="A_PLAYER", depth=constants.DEPTH_PLAYER, creature=creature_com,
+                       container=container_com)
 
     GAME.current_obj.append(PLAYER)
 
@@ -1370,11 +1623,29 @@ def gen_Stairs(coords: PosXY, downwards):
     stairs_com = com_Stairs(downwards)
 
     if downwards:
-        stairs = obj_Actor(x, y, "Stairs", depth=constants.DEPTH_BKGD, animation_key= "S_STAIRS_DOWN", stairs=stairs_com)
+        stairs = obj_Actor(x, y, "Stairs", depth=constants.DEPTH_BKGD, animation_key="S_STAIRS_DOWN", stairs=stairs_com)
     else:
-        stairs = obj_Actor(x, y, "Stairs", depth=constants.DEPTH_BKGD, animation_key= "S_STAIRS_UP", stairs=stairs_com)
+        stairs = obj_Actor(x, y, "Stairs", depth=constants.DEPTH_BKGD, animation_key="S_STAIRS_UP", stairs=stairs_com)
 
     GAME.current_obj.append(stairs)
+
+
+def gen_Portal(coords: PosXY, key: str):
+    x, y = coords
+    portal_com = com_Portal(key)
+    portal = obj_Actor(x, y, "Exit Portal", depth=constants.DEPTH_BKGD, animation_key="S_PORTAL_CLOSED",
+                       portal=portal_com)
+
+    GAME.current_obj.append(portal)
+
+
+def gen_magic_lamp(coords: PosXY, key: str):
+    x, y = coords
+    lamp_item = com_Item(use_function=cast_key, value=key)
+    lamp = obj_Actor(x, y, "Magic Lamp", animation_key="S_LAMP", depth=constants.DEPTH_ITEM, item=lamp_item)
+
+    GAME.current_obj.append(lamp)
+
 
 #
 # MAIN GAME LOOP
@@ -1383,6 +1654,7 @@ def gen_Stairs(coords: PosXY, downwards):
 def game_main_loop():
     global FOV_CALCULATE
 
+    FOV_CALCULATE = True
     game_quit = False
     player_action = 'no-action'
 
@@ -1395,12 +1667,18 @@ def game_main_loop():
         map_calculate_fov()
 
         if player_action == 'QUIT':
-            game_exit()
+            game_save()
+            menu_main()
+
+        if PLAYER.state == "STATUS_DEAD" or PLAYER.state == "STATUS_WIN":
+            game_quit = True
 
         for obj in GAME.current_obj:
             if obj.ai:
                 if player_action != 'no-action':
                     obj.ai.take_turn()
+            if obj.portal:
+                obj.portal.update()
 
         # draw the game
         draw_game()
@@ -1413,13 +1691,11 @@ def game_message(msg, msg_color=constants.COLOR_WHITE):
 
 
 def game_handle_keys():
-    # TODO get player input
     event_list = pygame.event.get()
     key_list = pygame.key.get_pressed()
 
     MOD_KEY = key_list[pygame.K_RSHIFT] or key_list[pygame.K_LSHIFT]
 
-    # TODO process input
     for event in event_list:
         if event.type == pygame.QUIT:
             return "QUIT"
@@ -1479,12 +1755,17 @@ def game_handle_keys():
 def game_init():
     """Setup the main window and pygame"""
 
-    global SURFACE_MAIN, SURFACE_MAP, CLOCK, FOV_CALCULATE, ASSETS, CAMERA
+    global SURFACE_MAIN, SURFACE_MAP, CLOCK, FOV_CALCULATE, ASSETS, CAMERA, PREF
     # startup pygame
     pygame.init()
 
     # Repeating the key input
     pygame.key.set_repeat(200, 50)
+
+    try:
+        pref_load()
+    except:
+        PREF = str_Preferences()
 
     # Create the Main Image Surface
     SURFACE_MAIN = pygame.display.set_mode((constants.CAMERA_WIDTH, constants.CAMERA_HEIGHT))
@@ -1492,7 +1773,7 @@ def game_init():
     SURFACE_MAP = pygame.Surface((constants.MAP_WIDTH * constants.CELL_WIDTH,
                                   constants.MAP_HEIGHT * constants.CELL_HEIGHT))
 
-    ASSETS = str_Assets()
+    ASSETS = obj_Assets()
     CAMERA = obj_Camera()
 
     CLOCK = pygame.time.Clock()
@@ -1522,20 +1803,27 @@ def game_save():
         pickle.dump([GAME, PLAYER], file)
 
 
+def pref_load():
+    global PREF
+
+    with gzip.open('data/pref', 'rb') as file:
+        PREF = pickle.load(file)
+
+
+def pref_save():
+    with gzip.open('data/pref', 'wb') as file:
+        pickle.dump(PREF, file)
+
+
+def files_delete(file):
+    save_found = os.path.isfile(file)
+    if save_found: os.remove(file)
+
+
 def game_exit():
-    game_save()
     pygame.quit()
     exit()
 
 
-def game_start():
-    try:
-        game_load()
-    except:
-        game_new()
-
-    game_main_loop()
-
 if __name__ == '__main__':
     menu_main()
-
